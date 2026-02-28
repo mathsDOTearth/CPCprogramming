@@ -18,7 +18,7 @@ sudo apt install -y \
     cmake
 
 cd ~
-git clone https://github.com/z88dk/z88dk.git
+git clone --recursive git@github.com:z88dk/z88dk.git
 cd z88dk
 ./build.sh
 
