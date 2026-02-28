@@ -1,5 +1,5 @@
 /*
- * SULTAN'S MAZE II - ASCII Topdown
+ * SULTAN'S MAZE II - version 0.2
  * Title + Input + Maze Generation + Top-down map
  *
  * by @mathsDOTearth on github
@@ -321,24 +321,47 @@ void move_ghost(void)
  * DRAW TOP-DOWN MAP (for testing, will be replaced by 3D)
  * ============================================================ */
 
+/* Draw a single cell at maze position (x,y) */
+void draw_cell(unsigned char x, unsigned char y)
+{
+    goto_xy(x + 1, y + 2);
+    if (x == px && y == py) {
+        switch (pdir) {
+            case DIR_N: putchar('^'); break;
+            case DIR_E: putchar('>'); break;
+            case DIR_S: putchar('v'); break;
+            case DIR_W: putchar('<'); break;
+            default:    putchar('@'); break;
+        }
+    } else if (x == ghost_x && y == ghost_y) {
+        putchar('G');
+    } else if (maze[y][x] & CELL_WALL) {
+        putchar('#');
+    } else if (maze[y][x] & CELL_GEM) {
+        putchar('*');
+    } else if (maze[y][x] & CELL_EXIT) {
+        putchar('E');
+    } else {
+        putchar('.');
+    }
+}
+
+/* Full map draw - only used once at start */
 void draw_map(void)
 {
     unsigned char x, y;
-    char dir_char;
 
-    /* Draw maze starting at screen row 2 */
     for (y = 0; y < MAZE_H; y++) {
         goto_xy(1, y + 2);
         for (x = 0; x < MAZE_W; x++) {
             if (x == px && y == py) {
                 switch (pdir) {
-                    case DIR_N: dir_char = '^'; break;
-                    case DIR_E: dir_char = '>'; break;
-                    case DIR_S: dir_char = 'v'; break;
-                    case DIR_W: dir_char = '<'; break;
-                    default:    dir_char = '@'; break;
+                    case DIR_N: putchar('^'); break;
+                    case DIR_E: putchar('>'); break;
+                    case DIR_S: putchar('v'); break;
+                    case DIR_W: putchar('<'); break;
+                    default:    putchar('@'); break;
                 }
-                putchar(dir_char);
             } else if (x == ghost_x && y == ghost_y) {
                 putchar('G');
             } else if (maze[y][x] & CELL_WALL) {
@@ -496,15 +519,23 @@ void game_loop(void)
     int key;
     unsigned char nx, ny;
     unsigned char i;
+    unsigned char old_px, old_py;
+    unsigned char old_gx, old_gy;
 
     cls();
+    draw_map();
+    draw_status();
 
     while (game_running) {
-        draw_map();
-        draw_status();
 
         /* Get key */
         key = fgetc_cons();
+
+        /* Remember old positions */
+        old_px = px;
+        old_py = py;
+        old_gx = ghost_x;
+        old_gy = ghost_y;
 
         switch (key) {
             case 'w': case 'W':
@@ -587,6 +618,15 @@ void game_loop(void)
             gameover_screen();
             return;
         }
+
+        /* Partial redraw - only update changed cells */
+        draw_cell(old_px, old_py);   /* clear old player pos */
+        draw_cell(px, py);           /* draw new player pos */
+        if (old_gx != ghost_x || old_gy != ghost_y) {
+            draw_cell(old_gx, old_gy);  /* clear old ghost pos */
+            draw_cell(ghost_x, ghost_y); /* draw new ghost pos */
+        }
+        draw_status();
     }
 }
 
