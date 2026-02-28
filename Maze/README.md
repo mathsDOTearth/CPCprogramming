@@ -11,5 +11,8 @@ Keys are:
 `Q` to quit
 
 # Version History
-# 0.1
+## 0.2
+Same as 0.1 but only redraw area round player and ghost to speed up play.
+
+## 0.1
 Simple ASCII version with top down view wile I work on maze generation and game mechanic.
