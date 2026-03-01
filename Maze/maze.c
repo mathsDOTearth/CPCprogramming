@@ -1,6 +1,7 @@
 /*
- * SULTAN'S MAZE II - version 0.2
- * Title + Input + Maze Generation + Top-down map
+ * SULTAN'S MAZE II - version 0.3
+ * Top-down map + hedge parting + quit loop
+ * Amstrad CPC 6128 / z88dk
  *
  * by @mathsDOTearth on github
  * https://github.com/mathsDOTearth/CPCprogramming/
@@ -9,18 +10,15 @@
  *   zcc +cpc -clib=ansi -lndos -O2 -create-app maze.c -o maze.bin
  *   iDSK maze.dsk -n
  *   iDSK maze.dsk -i ./maze.cpc
- *
  * Run: run"maze.cpc
  */
 
-/* Request a 512 byte stack instead of the default 256 */
 #pragma output CRT_STACK_SIZE = 512
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* z88dk console key read */
 extern int fgetc_cons(void);
 
 /* ============================================================
@@ -31,13 +29,11 @@ extern int fgetc_cons(void);
 #define MAZE_H    16
 #define NUM_GEMS   6
 
-/* Directions: 0=North, 1=East, 2=South, 3=West */
 #define DIR_N 0
 #define DIR_E 1
 #define DIR_S 2
 #define DIR_W 3
 
-/* Cell flags */
 #define CELL_WALL  1
 #define CELL_GEM   2
 #define CELL_EXIT  4
@@ -47,7 +43,7 @@ extern int fgetc_cons(void);
  * ============================================================ */
 
 unsigned char maze[MAZE_H][MAZE_W];
-unsigned char px, py, pdir;  /* player position and direction */
+unsigned char px, py, pdir;
 int energy;
 unsigned char gems_collected;
 unsigned char gems_total;
@@ -56,22 +52,21 @@ unsigned char ghost_timer;
 unsigned char game_running;
 unsigned char maze_seed;
 
-/* Gem positions */
 unsigned char gem_x[NUM_GEMS], gem_y[NUM_GEMS];
 unsigned char gem_taken[NUM_GEMS];
-
-/* Exit position */
 unsigned char exit_x, exit_y;
 
-/* Direction deltas: N, E, S, W */
 const signed char dx[] = { 0, 1, 0, -1 };
 const signed char dy[] = { -1, 0, 1, 0 };
+
+/* Previous positions for partial redraw */
+unsigned char old_px, old_py, old_gx, old_gy;
 
 /* ============================================================
  * SIMPLE RNG (LFSR)
  * ============================================================ */
 
-unsigned int rng_state = 12345;
+unsigned int rng_state;
 
 unsigned char rng(void)
 {
@@ -84,22 +79,17 @@ unsigned char rng(void)
 
 /* ============================================================
  * SCREEN HELPERS
- * Using ANSI escape codes via -clib=ansi
  * ============================================================ */
 
 void cls(void)
 {
-    /* ANSI clear screen + home cursor */
     putchar(27); putchar('['); putchar('2'); putchar('J');
     putchar(27); putchar('['); putchar('H');
 }
 
 void goto_xy(unsigned char x, unsigned char y)
 {
-    /* ANSI cursor positioning: ESC[row;colH */
-    /* row and col are 1-based */
     putchar(27); putchar('[');
-    /* output row as digits */
     if (y >= 10) putchar('0' + y / 10);
     putchar('0' + y % 10);
     putchar(';');
@@ -111,38 +101,38 @@ void goto_xy(unsigned char x, unsigned char y)
 void print_at(unsigned char x, unsigned char y, char *s)
 {
     goto_xy(x, y);
-    while (*s) {
-        putchar(*s);
-        s++;
-    }
+    while (*s) { putchar(*s); s++; }
 }
 
 void print_num_at(unsigned char x, unsigned char y, int n)
 {
     char buf[8];
     int i = 0;
-
     goto_xy(x, y);
+    if (n == 0) { putchar('0'); return; }
+    if (n < 0) { putchar('-'); n = -n; }
+    while (n > 0 && i < 7) { buf[i++] = '0' + (n % 10); n /= 10; }
+    while (i > 0) putchar(buf[--i]);
+}
 
-    if (n == 0) {
-        putchar('0');
-        return;
-    }
-    if (n < 0) {
-        putchar('-');
-        n = -n;
-    }
-    while (n > 0 && i < 7) {
-        buf[i++] = '0' + (n % 10);
-        n /= 10;
-    }
-    while (i > 0) {
-        putchar(buf[--i]);
+/* ============================================================
+ * CONFIRM PROMPT - "Are you sure? Y/N"
+ * Returns 1 if Y, 0 if N
+ * ============================================================ */
+
+unsigned char confirm(unsigned char row)
+{
+    int key;
+    print_at(1, row, "Are you sure? (Y/N)    ");
+    while (1) {
+        key = fgetc_cons();
+        if (key == 'y' || key == 'Y') return 1;
+        if (key == 'n' || key == 'N') return 0;
     }
 }
 
 /* ============================================================
- * MAZE GENERATION (Recursive backtracker, explicit stack)
+ * MAZE GENERATION
  * ============================================================ */
 
 #define STACK_SIZE 128
@@ -156,54 +146,34 @@ void generate_maze(void)
     unsigned char dirs[4];
     unsigned char i, j, count;
 
-    /* Fill with walls */
     for (y = 0; y < MAZE_H; y++)
         for (x = 0; x < MAZE_W; x++)
             maze[y][x] = CELL_WALL;
 
-    /* Start carving from (1,1) */
-    x = 1; y = 1;
-    maze[y][x] = 0;
+    x = 1; y = 1; maze[y][x] = 0;
     stk_ptr = 0;
-    stk_x[stk_ptr] = x;
-    stk_y[stk_ptr] = y;
-    stk_ptr++;
+    stk_x[stk_ptr] = x; stk_y[stk_ptr] = y; stk_ptr++;
 
     while (stk_ptr > 0) {
-        x = stk_x[stk_ptr - 1];
-        y = stk_y[stk_ptr - 1];
-
-        /* Find unvisited neighbours 2 cells away */
+        x = stk_x[stk_ptr - 1]; y = stk_y[stk_ptr - 1];
         count = 0;
         for (i = 0; i < 4; i++) {
-            nx = x + dx[i] * 2;
-            ny = y + dy[i] * 2;
+            nx = x + dx[i] * 2; ny = y + dy[i] * 2;
             if (nx >= 1 && nx < MAZE_W - 1 &&
                 ny >= 1 && ny < MAZE_H - 1 &&
-                maze[ny][nx] == CELL_WALL) {
+                maze[ny][nx] == CELL_WALL)
                 dirs[count++] = i;
-            }
         }
-
-        if (count == 0) {
-            stk_ptr--;
-        } else {
-            j = rng() % count;
-            i = dirs[j];
-            nx = x + dx[i] * 2;
-            ny = y + dy[i] * 2;
-
-            /* Carve passage */
+        if (count == 0) { stk_ptr--; }
+        else {
+            j = rng() % count; i = dirs[j];
+            nx = x + dx[i] * 2; ny = y + dy[i] * 2;
             maze[y + dy[i]][x + dx[i]] = 0;
             maze[ny][nx] = 0;
-
-            stk_x[stk_ptr] = nx;
-            stk_y[stk_ptr] = ny;
-            stk_ptr++;
+            stk_x[stk_ptr] = nx; stk_y[stk_ptr] = ny; stk_ptr++;
         }
     }
 
-    /* Add a few extra openings for variety */
     for (i = 0; i < 10; i++) {
         x = (rng() % (MAZE_W - 4)) + 2;
         y = (rng() % (MAZE_H - 4)) + 2;
@@ -213,8 +183,7 @@ void generate_maze(void)
             if (y < MAZE_H-1 && maze[y+1][x] == 0) count++;
             if (x > 0 && maze[y][x-1] == 0) count++;
             if (x < MAZE_W-1 && maze[y][x+1] == 0) count++;
-            if (count == 2)
-                maze[y][x] = 0;
+            if (count == 2) maze[y][x] = 0;
         }
     }
 }
@@ -227,34 +196,25 @@ void place_items(void)
 {
     unsigned char i, x, y;
 
-    /* Player at start */
     px = 1; py = 1; pdir = DIR_E;
     maze[1][1] = 0;
 
-    /* Place gems */
     gems_total = NUM_GEMS;
     for (i = 0; i < NUM_GEMS; i++) {
         do {
             x = (rng() % (MAZE_W - 2)) + 1;
             y = (rng() % (MAZE_H - 2)) + 1;
         } while (maze[y][x] != 0 || (x <= 2 && y <= 2));
-        gem_x[i] = x;
-        gem_y[i] = y;
-        gem_taken[i] = 0;
+        gem_x[i] = x; gem_y[i] = y; gem_taken[i] = 0;
         maze[y][x] |= CELL_GEM;
     }
 
-    /* Exit in far corner */
-    exit_x = MAZE_W - 2;
-    exit_y = MAZE_H - 2;
-    /* Ensure exit is reachable */
+    exit_x = MAZE_W - 2; exit_y = MAZE_H - 2;
     maze[exit_y][exit_x] = CELL_EXIT;
     if (maze[exit_y - 1][exit_x] == CELL_WALL &&
-        maze[exit_y][exit_x - 1] == CELL_WALL) {
+        maze[exit_y][exit_x - 1] == CELL_WALL)
         maze[exit_y - 1][exit_x] = 0;
-    }
 
-    /* Ghost starts away from player */
     do {
         ghost_x = (rng() % (MAZE_W - 4)) + 2;
         ghost_y = (rng() % (MAZE_H - 4)) + 2;
@@ -265,10 +225,12 @@ void place_items(void)
     energy = 500;
     gems_collected = 0;
     game_running = 1;
+    old_px = px; old_py = py;
+    old_gx = ghost_x; old_gy = ghost_y;
 }
 
 /* ============================================================
- * GHOST AI
+ * HELPERS
  * ============================================================ */
 
 unsigned char is_wall(unsigned char cx, unsigned char cy)
@@ -277,80 +239,78 @@ unsigned char is_wall(unsigned char cx, unsigned char cy)
     return (maze[cy][cx] & CELL_WALL) ? 1 : 0;
 }
 
+unsigned char is_border(unsigned char cx, unsigned char cy)
+{
+    if (cx == 0 || cx == MAZE_W - 1) return 1;
+    if (cy == 0 || cy == MAZE_H - 1) return 1;
+    return 0;
+}
+
+/* ============================================================
+ * GHOST AI
+ * ============================================================ */
+
 void move_ghost(void)
 {
     unsigned char best_dir, best_dist, i, nx, ny, dist;
     unsigned char moved;
 
-    /* 25% random movement */
     if ((rng() & 3) == 0) {
         i = rng() & 3;
-        nx = ghost_x + dx[i];
-        ny = ghost_y + dy[i];
+        nx = ghost_x + dx[i]; ny = ghost_y + dy[i];
         if (!is_wall(nx, ny)) {
-            ghost_x = nx;
-            ghost_y = ny;
-            return;
+            ghost_x = nx; ghost_y = ny; return;
         }
     }
 
-    /* Chase player */
-    best_dir = 0;
-    best_dist = 255;
-    moved = 0;
+    best_dir = 0; best_dist = 255; moved = 0;
     for (i = 0; i < 4; i++) {
-        nx = ghost_x + dx[i];
-        ny = ghost_y + dy[i];
+        nx = ghost_x + dx[i]; ny = ghost_y + dy[i];
         if (!is_wall(nx, ny)) {
             dist = abs((int)nx - (int)px) + abs((int)ny - (int)py);
             if (dist < best_dist) {
-                best_dist = dist;
-                best_dir = i;
-                moved = 1;
+                best_dist = dist; best_dir = i; moved = 1;
             }
         }
     }
-
     if (moved) {
-        ghost_x += dx[best_dir];
-        ghost_y += dy[best_dir];
+        ghost_x += dx[best_dir]; ghost_y += dy[best_dir];
     }
 }
 
 /* ============================================================
- * DRAW TOP-DOWN MAP (for testing, will be replaced by 3D)
+ * DRAWING
  * ============================================================ */
 
-/* Draw a single cell at maze position (x,y) */
 void draw_cell(unsigned char x, unsigned char y)
 {
+    char ch;
     goto_xy(x + 1, y + 2);
     if (x == px && y == py) {
         switch (pdir) {
-            case DIR_N: putchar('^'); break;
-            case DIR_E: putchar('>'); break;
-            case DIR_S: putchar('v'); break;
-            case DIR_W: putchar('<'); break;
-            default:    putchar('@'); break;
+            case DIR_N: ch = '^'; break;
+            case DIR_E: ch = '>'; break;
+            case DIR_S: ch = 'v'; break;
+            case DIR_W: ch = '<'; break;
+            default:    ch = '@'; break;
         }
     } else if (x == ghost_x && y == ghost_y) {
-        putchar('G');
+        ch = 'G';
     } else if (maze[y][x] & CELL_WALL) {
-        putchar('#');
+        ch = '#';
     } else if (maze[y][x] & CELL_GEM) {
-        putchar('*');
+        ch = '*';
     } else if (maze[y][x] & CELL_EXIT) {
-        putchar('E');
+        ch = 'E';
     } else {
-        putchar('.');
+        ch = '.';
     }
+    putchar(ch);
 }
 
-/* Full map draw - only used once at start */
 void draw_map(void)
 {
     unsigned char x, y;
-
     for (y = 0; y < MAZE_H; y++) {
         goto_xy(1, y + 2);
         for (x = 0; x < MAZE_W; x++) {
@@ -377,11 +337,18 @@ void draw_map(void)
     }
 }
 
+void update_map(void)
+{
+    draw_cell(old_px, old_py);
+    draw_cell(old_gx, old_gy);
+    draw_cell(px, py);
+    draw_cell(ghost_x, ghost_y);
+}
+
 void draw_status(void)
 {
     print_at(1, 19, "Energy:");
     print_num_at(9, 19, energy);
-    /* clear trailing digits without newline */
     putchar(' '); putchar(' '); putchar(' ');
 
     print_at(1, 20, "Gems:");
@@ -398,14 +365,15 @@ void draw_status(void)
         case DIR_W: putchar('W'); break;
     }
 
-    print_at(1, 22, "WASD=move Q=quit       ");
+    print_at(1, 22, "WASD=move P=part Q=quit");
 }
 
 /* ============================================================
  * TITLE SCREEN
+ * Returns: 0 = play game, 1 = quit program
  * ============================================================ */
 
-void title_screen(void)
+unsigned char title_screen(void)
 {
     int key;
     unsigned char seed;
@@ -416,32 +384,30 @@ void title_screen(void)
     puts("     SULTAN'S  MAZE  II    ");
     puts("    ========================");
     puts("");
-    puts("  The Sultan's jewels are lost");
-    puts("  deep within the ancient");
-    puts("  maze. The ghost of his");
-    puts("  bodyguard still haunts");
-    puts("  these corridors...");
+    puts("  The Sultan's jewels are");
+    puts("  lost deep in the maze.");
+    puts("  The ghost of his bodyguard");
+    puts("  still haunts the halls...");
     puts("");
-    puts("  Find all 6 gems and escape!");
-    puts("  But beware - your energy is");
-    puts("  limited, and the ghost");
-    puts("  hunts you!");
+    puts("  Find all 6 gems & escape!");
+    puts("  Energy is limited and");
+    puts("  the ghost hunts you!");
     puts("");
-    puts("  Controls:");
-    puts("   W-Forward  S-Backward");
-    puts("   A-Left     D-Right");
-    puts("   M-Minimap  Q-Quit");
+    puts("  W-Fwd S-Back A/D-Turn");
+    puts("  P-Part hedge (-50 energy)");
+    puts("  Q-Quit");
     puts("");
-    puts("  Enter maze number (1-255)");
-    puts("  or ENTER for random:");
+    puts("  Maze (1-255) or ENTER:");
 
-    /* Read up to 3 digits */
     seed = 0;
     while (1) {
         key = fgetc_cons();
-        if (key == 13 || key == 10) {
-            /* Enter pressed */
-            break;
+        if (key == 13 || key == 10) break;
+        if (key == 'q' || key == 'Q') {
+            if (confirm(22)) return 1;
+            /* They said No - clear the prompt */
+            print_at(1, 22, "  Maze (1-255) or ENTER:");
+            continue;
         }
         if (key >= '0' && key <= '9') {
             putchar(key);
@@ -450,24 +416,22 @@ void title_screen(void)
     }
 
     if (seed == 0) {
-        /* No number entered - use a changing default */
         rng_state = 7777;
         maze_seed = 0;
         puts("");
-        puts("  Random maze selected!");
+        puts("  Random maze!");
     } else {
         rng_state = (unsigned int)seed * 257 + 1;
         maze_seed = seed;
-        puts("");
-        printf("  Maze #%d selected!", seed);
     }
     puts("");
-    puts("  Press any key to begin...");
+    puts("  Press any key...");
     fgetc_cons();
+    return 0;
 }
 
 /* ============================================================
- * GAME OVER / VICTORY
+ * END SCREENS
  * ============================================================ */
 
 void victory_screen(void)
@@ -475,13 +439,11 @@ void victory_screen(void)
     cls();
     puts("");
     puts("  **************************");
-    puts("  *     YOU ESCAPED!        *");
+    puts("  *     YOU ESCAPED!       *");
     puts("  **************************");
     puts("");
-    puts("  You collected all the gems");
-    puts("  and escaped the maze!");
-    puts("");
-    printf("  Remaining energy: %d\n", energy);
+    puts("  All gems collected!");
+    printf("  Energy left: %d\n", energy);
     if (maze_seed > 0)
         printf("  Maze #%d\n", maze_seed);
     puts("");
@@ -494,15 +456,11 @@ void gameover_screen(void)
     cls();
     puts("");
     puts("  **************************");
-    puts("  *      GAME  OVER        *");
+    puts("  *      GAME  OVER       *");
     puts("  **************************");
     puts("");
     puts("  Your energy ran out!");
-    puts("  The maze claims another");
-    puts("  victim...");
-    puts("");
-    printf("  Gems collected: %d / %d\n",
-           gems_collected, gems_total);
+    printf("  Gems: %d / %d\n", gems_collected, gems_total);
     if (maze_seed > 0)
         printf("  Maze #%d\n", maze_seed);
     puts("");
@@ -512,35 +470,29 @@ void gameover_screen(void)
 
 /* ============================================================
  * MAIN GAME LOOP
+ * Returns: 0 = back to title, 1 = quit program
  * ============================================================ */
 
-void game_loop(void)
+unsigned char game_loop(void)
 {
     int key;
     unsigned char nx, ny;
     unsigned char i;
-    unsigned char old_px, old_py;
-    unsigned char old_gx, old_gy;
 
     cls();
     draw_map();
     draw_status();
 
     while (game_running) {
-
-        /* Get key */
         key = fgetc_cons();
 
-        /* Remember old positions */
-        old_px = px;
-        old_py = py;
-        old_gx = ghost_x;
-        old_gy = ghost_y;
+        /* Save old positions for partial redraw */
+        old_px = px; old_py = py;
+        old_gx = ghost_x; old_gy = ghost_y;
 
         switch (key) {
             case 'w': case 'W':
-                nx = px + dx[pdir];
-                ny = py + dy[pdir];
+                nx = px + dx[pdir]; ny = py + dy[pdir];
                 if (!is_wall(nx, ny)) {
                     px = nx; py = ny;
                     energy -= 2;
@@ -549,8 +501,7 @@ void game_loop(void)
                 break;
 
             case 's': case 'S':
-                nx = px - dx[pdir];
-                ny = py - dy[pdir];
+                nx = px - dx[pdir]; ny = py - dy[pdir];
                 if (!is_wall(nx, ny)) {
                     px = nx; py = ny;
                     energy -= 2;
@@ -568,9 +519,36 @@ void game_loop(void)
                 energy -= 1;
                 break;
 
-            case 'q': case 'Q':
-                game_running = 0;
+            case 'p': case 'P':
+                nx = px + dx[pdir];
+                ny = py + dy[pdir];
+                if (is_wall(nx, ny) && !is_border(nx, ny) && energy > 50) {
+                    maze[ny][nx] = 0;
+                    px = nx; py = ny;
+                    energy -= 50;
+                    ghost_timer++;
+                    draw_cell(nx, ny);
+                    print_at(1, 23, "* Hedge parted! -50 *  ");
+                } else if (is_border(nx, ny)) {
+                    print_at(1, 23, "Can't part the border! ");
+                } else if (energy <= 50) {
+                    print_at(1, 23, "Not enough energy!     ");
+                } else {
+                    print_at(1, 23, "No hedge ahead!        ");
+                }
                 break;
+
+            case 'q': case 'Q':
+                if (confirm(23)) {
+                    game_running = 0;
+                    return 0;  /* back to title */
+                }
+                /* They said No - clear prompt and continue */
+                print_at(1, 23, "                       ");
+                continue;
+
+            default:
+                continue;
         }
 
         /* Check gem pickup */
@@ -579,18 +557,17 @@ void game_loop(void)
                 gem_taken[i] = 1;
                 gems_collected++;
                 maze[gem_y[i]][gem_x[i]] &= ~CELL_GEM;
-                print_at(1, 23, "** GEM FOUND! **");
+                print_at(1, 23, "** GEM FOUND! **       ");
             }
         }
 
         /* Check exit */
         if (px == exit_x && py == exit_y) {
             if (gems_collected >= gems_total) {
-                game_running = 0;
                 victory_screen();
-                return;
+                return 0;  /* back to title */
             } else {
-                print_at(1, 23, "Find all gems first!");
+                print_at(1, 23, "Find all gems first!   ");
             }
         }
 
@@ -603,50 +580,41 @@ void game_loop(void)
         /* Ghost collision */
         if (px == ghost_x && py == ghost_y) {
             energy -= 50;
-            print_at(1, 23, "!! GHOST !! -50 energy");
-            /* Push player back */
-            nx = px - dx[pdir];
-            ny = py - dy[pdir];
-            if (!is_wall(nx, ny)) {
-                px = nx; py = ny;
-            }
+            print_at(1, 23, "!! GHOST !! -50 energy ");
+            nx = px - dx[pdir]; ny = py - dy[pdir];
+            if (!is_wall(nx, ny)) { px = nx; py = ny; }
         }
 
         /* Check energy */
         if (energy <= 0) {
-            game_running = 0;
             gameover_screen();
-            return;
+            return 0;  /* back to title */
         }
 
-        /* Partial redraw - only update changed cells */
-        draw_cell(old_px, old_py);   /* clear old player pos */
-        draw_cell(px, py);           /* draw new player pos */
-        if (old_gx != ghost_x || old_gy != ghost_y) {
-            draw_cell(old_gx, old_gy);  /* clear old ghost pos */
-            draw_cell(ghost_x, ghost_y); /* draw new ghost pos */
-        }
+        /* Partial map redraw */
+        update_map();
         draw_status();
     }
+
+    return 0;
 }
 
 /* ============================================================
- * MAIN
+ * MAIN - loops title -> game -> title until quit
  * ============================================================ */
 
 int main(void)
 {
-    title_screen();
-
-    generate_maze();
-    place_items();
-
-    game_loop();
+    while (1) {
+        if (title_screen()) break;  /* Q at title = exit */
+        generate_maze();
+        place_items();
+        if (game_loop()) break;     /* shouldn't happen but safe */
+    }
 
     cls();
     puts("");
     puts("  Thanks for playing!");
     puts("");
-
     return 0;
 }
