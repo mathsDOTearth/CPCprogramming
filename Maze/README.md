@@ -11,6 +11,10 @@ Keys are:
 `Q` to quit
 
 # Version History
+## 0.3
+Added `Part` hedge feature triggered by letter `P`.  
+Improved handling of `Quit` to have `Y` or `N` confirm.
+
 ## 0.2
 Same as 0.1 but only redraw area round player and ghost to speed up play.
 
