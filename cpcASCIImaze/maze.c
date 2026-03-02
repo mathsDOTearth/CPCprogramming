@@ -1,9 +1,13 @@
 /*
- * CPC ASCII MAZE - version 0.1
+ * CPC ASCII MAZE - version 0.2
  * Amstrad CPC 6128 / z88dk
  *
  * by @mathsDOTearth on github
  * https://github.com/mathsDOTearth/CPCprogramming/
+ *
+ * v0.2 - Continuous play: completing a maze randomly picks
+ *        another (1-255), awards +100 energy & score bonus.
+ *        Game continues until energy runs out.
  * 
  * Compile:
  *   zcc +cpc -clib=ansi -lndos -O2 -create-app maze.c -o maze.bin
@@ -50,6 +54,10 @@ unsigned char ghost_x, ghost_y;
 unsigned char ghost_timer;
 unsigned char game_running;
 unsigned char maze_seed;
+
+/* Scoring and level tracking */
+int score;
+unsigned char level;
 
 unsigned char gem_x[NUM_GEMS], gem_y[NUM_GEMS];
 unsigned char gem_taken[NUM_GEMS];
@@ -188,7 +196,7 @@ void generate_maze(void)
 }
 
 /* ============================================================
- * PLACE ITEMS
+ * PLACE ITEMS (no longer resets energy - caller handles that)
  * ============================================================ */
 
 void place_items(void)
@@ -221,7 +229,6 @@ void place_items(void)
              (ghost_x + ghost_y < 8));
 
     ghost_timer = 0;
-    energy = 500;
     gems_collected = 0;
     game_running = 1;
     old_px = px; old_py = py;
@@ -346,25 +353,52 @@ void update_map(void)
 
 void draw_status(void)
 {
-    print_at(1, 19, "Energy:");
-    print_num_at(9, 19, energy);
+    print_at(1, 19, "Score:");
+    print_num_at(8, 19, score);
     putchar(' '); putchar(' '); putchar(' ');
 
-    print_at(1, 20, "Gems:");
-    print_num_at(7, 20, (int)gems_collected);
+    print_at(17, 19, "Lvl:");
+    print_num_at(22, 19, (int)level);
+    putchar(' '); putchar(' ');
+
+    print_at(1, 20, "Energy:");
+    print_num_at(9, 20, energy);
+    putchar(' '); putchar(' '); putchar(' ');
+
+    print_at(17, 20, "Gems:");
+    print_num_at(23, 20, (int)gems_collected);
     putchar('/');
     putchar('0' + gems_total);
 
-    print_at(15, 20, "Dir:");
-    goto_xy(20, 20);
-    switch (pdir) {
-        case DIR_N: putchar('N'); break;
-        case DIR_E: putchar('E'); break;
-        case DIR_S: putchar('S'); break;
-        case DIR_W: putchar('W'); break;
-    }
-
     print_at(1, 22, "WASD=move P=part Q=quit");
+}
+
+/* ============================================================
+ * LEVEL COMPLETE SCREEN (brief, shown between mazes)
+ * ============================================================ */
+
+void level_complete_screen(int bonus)
+{
+    cls();
+    puts("");
+    puts("  **************************");
+    puts("  *    MAZE COMPLETE!      *");
+    puts("  **************************");
+    puts("");
+    printf("  Maze #%d cleared!\n", maze_seed);
+    puts("");
+    printf("  Base score:    +100\n");
+    printf("  Energy bonus:  +%d\n", bonus);
+    printf("  Energy refill: +100\n");
+    puts("");
+    printf("  Total score: %d\n", score);
+    printf("  Energy: %d\n", energy);
+    puts("");
+    printf("  Level %d complete!\n", level);
+    puts("");
+    puts("  Next maze loading...");
+    puts("  Press any key!");
+    fgetc_cons();
 }
 
 /* ============================================================
@@ -380,7 +414,7 @@ unsigned char title_screen(void)
     cls();
     puts("");
     puts("    ========================");
-    puts("     CPC ASCII  MAZE      ");
+    puts("     CPC ASCII  MAZE  v0.2");
     puts("    ========================");
     puts("");
     puts("  Collect the jewels");
@@ -389,23 +423,23 @@ unsigned char title_screen(void)
     puts("  still haunts the halls...");
     puts("");
     puts("  Find all 6 gems & escape!");
-    puts("  Energy is limited and");
-    puts("  the ghost hunts you!");
+    puts("  Completing a maze earns");
+    puts("  +100 energy & score bonus.");
+    puts("  How many can you clear?");
     puts("");
     puts("  W-Fwd S-Back A/D-Turn");
     puts("  P-Part hedge (-50 energy)");
     puts("  Q-Quit");
     puts("");
-    puts("  Maze (1-255) or ENTER:");
+    puts("  Start maze (1-255)/ENTER:");
 
     seed = 0;
     while (1) {
         key = fgetc_cons();
         if (key == 13 || key == 10) break;
         if (key == 'q' || key == 'Q') {
-            if (confirm(22)) return 1;
-            /* They said No - clear the prompt */
-            print_at(1, 22, "  Maze (1-255) or ENTER:");
+            if (confirm(23)) return 1;
+            print_at(1, 23, "  Start maze (1-255)/ENTER:");
             continue;
         }
         if (key >= '0' && key <= '9') {
@@ -423,6 +457,12 @@ unsigned char title_screen(void)
         rng_state = (unsigned int)seed * 257 + 1;
         maze_seed = seed;
     }
+
+    /* Initialise session state */
+    score = 0;
+    level = 1;
+    energy = 500;
+
     puts("");
     puts("  Press any key...");
     fgetc_cons();
@@ -430,25 +470,8 @@ unsigned char title_screen(void)
 }
 
 /* ============================================================
- * END SCREENS
+ * END SCREEN (game over - energy ran out)
  * ============================================================ */
-
-void victory_screen(void)
-{
-    cls();
-    puts("");
-    puts("  **************************");
-    puts("  *     YOU ESCAPED!       *");
-    puts("  **************************");
-    puts("");
-    puts("  All gems collected!");
-    printf("  Energy left: %d\n", energy);
-    if (maze_seed > 0)
-        printf("  Maze #%d\n", maze_seed);
-    puts("");
-    puts("  Press any key...");
-    fgetc_cons();
-}
 
 void gameover_screen(void)
 {
@@ -459,12 +482,36 @@ void gameover_screen(void)
     puts("  **************************");
     puts("");
     puts("  Your energy ran out!");
-    printf("  Gems: %d / %d\n", gems_collected, gems_total);
+    printf("  Final score: %d\n", score);
+    printf("  Mazes cleared: %d\n", level - 1);
+    printf("  Gems this maze: %d / %d\n", gems_collected, gems_total);
     if (maze_seed > 0)
-        printf("  Maze #%d\n", maze_seed);
+        printf("  Last maze: #%d\n", maze_seed);
     puts("");
     puts("  Press any key...");
     fgetc_cons();
+}
+
+/* ============================================================
+ * START NEXT LEVEL
+ * Picks a random maze seed 1-255, generates & places items.
+ * Energy carries over (caller already added the +100 bonus).
+ * ============================================================ */
+
+void start_next_level(void)
+{
+    unsigned char new_seed;
+
+    /* Pick a random maze 1-255 */
+    do {
+        new_seed = rng();
+    } while (new_seed == 0);
+
+    maze_seed = new_seed;
+    rng_state = (unsigned int)new_seed * 257 + 1;
+
+    generate_maze();
+    place_items();
 }
 
 /* ============================================================
@@ -477,6 +524,7 @@ unsigned char game_loop(void)
     int key;
     unsigned char nx, ny;
     unsigned char i;
+    int bonus;
 
     cls();
     draw_map();
@@ -560,11 +608,25 @@ unsigned char game_loop(void)
             }
         }
 
-        /* Check exit */
+        /* Check exit - level complete! */
         if (px == exit_x && py == exit_y) {
             if (gems_collected >= gems_total) {
-                victory_screen();
-                return 0;  /* back to title */
+                /* Award score: 100 base + energy bonus */
+                bonus = energy / 5;
+                score += 100 + bonus;
+                energy += 100;
+
+                level_complete_screen(bonus);
+
+                /* Advance to next random maze */
+                level++;
+                start_next_level();
+
+                /* Redraw for new level */
+                cls();
+                draw_map();
+                draw_status();
+                continue;
             } else {
                 print_at(1, 23, "Find all gems first!   ");
             }
@@ -608,12 +670,13 @@ int main(void)
         if (title_screen()) break;  /* Q at title = exit */
         generate_maze();
         place_items();
-        if (game_loop()) break;     /* shouldn't happen but safe */
+        if (game_loop()) break;
     }
 
     cls();
     puts("");
     puts("  Thanks for playing!");
+    printf("  Final score: %d\n", score);
     puts("");
     return 0;
 }
