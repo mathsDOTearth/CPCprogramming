@@ -1,6 +1,5 @@
 /*
  * CPC ASCII MAZE - version 0.1
- * Top-down map + hedge parting + quit loop
  * Amstrad CPC 6128 / z88dk
  *
  * by @mathsDOTearth on github
@@ -381,10 +380,10 @@ unsigned char title_screen(void)
     cls();
     puts("");
     puts("    ========================");
-    puts("     SULTAN'S  MAZE  II    ");
+    puts("     CPC ASCII  MAZE      ");
     puts("    ========================");
     puts("");
-    puts("  The Sultan's jewels are");
+    puts("  Collect the jewels");
     puts("  lost deep in the maze.");
     puts("  The ghost of his bodyguard");
     puts("  still haunts the halls...");
