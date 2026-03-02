@@ -13,5 +13,8 @@ W and S to move forward and backwards.
 Q to quit
 
 # Version History
+## 0.2
+added levels and scoring
+
 ## 0.1
 copy of sultans maze II prototype code
