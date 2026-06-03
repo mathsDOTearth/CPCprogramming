@@ -5,6 +5,7 @@ My childhood computer was an Amstrad CPC464 (with 64K RAM Pack and 3 inch Disc).
 Once you have set up the Dev Env (instructions below) then you can try:  
 [Hello World](https://github.com/mathsDOTearth/CPCprogramming/tree/main/Helloworld)  
 [Sultans-ish Maze II](https://github.com/mathsDOTearth/CPCprogramming/tree/main/Maze)  
+[Raycast Test](https://github.com/mathsDOTearth/CPCprogramming/tree/main/testraycast)  
 
 # Setting up Dev Env
 Here is what I did to set up the z88dk dev tools on my Linux PC:
