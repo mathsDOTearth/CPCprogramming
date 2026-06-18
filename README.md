@@ -8,7 +8,7 @@ Once you have set up the Dev Env (instructions below) then you can try:
 [Raycast Test](https://github.com/mathsDOTearth/CPCprogramming/tree/main/testraycast)  
 
 # Documentation
-(Documantation Home)[Docs/README.md] - My (as best as I can) Documentation for this project.
+[Documantation Home](Docs/README.md) - My (as best as I can) Documentation for this project.
 
 # Writing, Compiling and Running a Test
 This is what I did to test the install of these tools:
