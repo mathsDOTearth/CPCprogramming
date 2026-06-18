@@ -1,4 +1,5 @@
 # Setting up z88dk sdk
+[Back To Doc Home](README.md)
 
 # Setting up Dev Env
 Here is what I did to set up the z88dk dev tools on my Ubuntu Linux PC:
@@ -44,3 +45,4 @@ cmake ..
 make
 cp iDSK $Z88DK_HOME/bin
 ```
+[Back To Doc Home](README.md)
